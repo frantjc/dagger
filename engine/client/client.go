@@ -52,7 +52,6 @@ import (
 	"dagger.io/dagger"
 	"github.com/dagger/dagger/analytics"
 	"github.com/dagger/dagger/engine"
-	"github.com/dagger/dagger/engine/client/drivers"
 	"github.com/dagger/dagger/engine/client/imageload"
 	"github.com/dagger/dagger/engine/client/pathutil"
 	"github.com/dagger/dagger/engine/client/secretprovider"
@@ -165,7 +164,7 @@ type Client struct {
 
 	eg *errgroup.Group
 
-	connector   drivers.Connector
+	connector   Connector
 	imageLoader *imageload.Loader
 
 	internalCtx    context.Context
@@ -459,13 +458,13 @@ func (c *Client) startEngine(ctx context.Context, params Params) (rerr error) {
 		return fmt.Errorf("parse runner host: %w", err)
 	}
 
-	driver, err := drivers.GetDriver(ctx, remote.Scheme)
+	driver, err := OpenDriver(ctx, remote.String())
 	if err != nil {
 		return err
 	}
 
 	var cloudToken string
-	if v, ok := os.LookupEnv(drivers.EnvDaggerCloudToken); ok {
+	if v, ok := os.LookupEnv(EnvDaggerCloudToken); ok {
 		cloudToken = v
 	} else if _, ok := os.LookupEnv(envDaggerCloudCachetoken); ok {
 		cloudToken = v
@@ -481,9 +480,9 @@ func (c *Client) startEngine(ctx context.Context, params Params) (rerr error) {
 
 	provisionCtx, provisionSpan := Tracer(ctx).Start(ctx, "starting engine")
 	provisionCtx, provisionCancel := context.WithTimeout(provisionCtx, 10*time.Minute)
-	c.connector, err = driver.Provision(provisionCtx, remote, &drivers.DriverOpts{
+	c.connector, err = driver.Provision(provisionCtx, remote, &DriverOpts{
 		DaggerCloudToken: cloudToken,
-		GPUSupport:       os.Getenv(drivers.EnvGPUSupport),
+		GPUSupport:       os.Getenv(EnvGPUSupport),
 		Module:           params.Module,
 		Function:         params.Function,
 		ExecCmd:          params.ExecCmd,

@@ -6,7 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dagger/dagger/engine/client/drivers"
+	"github.com/dagger/dagger/engine/client"
 )
 
 func TestEngineHelpTopic(t *testing.T) {
@@ -35,7 +35,7 @@ func TestEngineHelpTopic(t *testing.T) {
 	help := renderHelp(t, topic)
 	// The topic carries the full catalog, including the variants and the
 	// legacy schemes that the flag usage leaves out.
-	for _, scheme := range drivers.SchemeCatalog() {
+	for _, scheme := range client.SchemeCatalog() {
 		require.Contains(t, help, scheme.Value, scheme.Scheme)
 	}
 	require.Contains(t, help, "tcp://HOST:PORT (no authentication)")
@@ -58,7 +58,7 @@ func TestEngineFlagCompletion(t *testing.T) {
 	require.True(t, ok)
 
 	values, directive := fn(root, nil, "")
-	require.Equal(t, drivers.SchemeCompletions(), values)
+	require.Equal(t, client.SchemeCompletions(), values)
 	// The values end in "://", so the shell must not append a space, and a
 	// path is never a valid completion.
 	require.Equal(t, cobra.ShellCompDirectiveNoSpace|cobra.ShellCompDirectiveNoFileComp, directive)

@@ -1,4 +1,4 @@
-package drivers
+package client
 
 import (
 	"fmt"
@@ -8,9 +8,10 @@ import (
 
 // Scheme describes one engine selector value for user-facing help. The catalog
 // below is the single source of truth for the `--engine` flag usage, the
-// `dagger help engine` topic, and shell completion. A test asserts that it
-// covers the driver registry exactly, so the three surfaces cannot drift from
-// the drivers that the CLI can actually use.
+// `dagger help engine` topic, and shell completion. A test in the CLI package,
+// which imports every driver, asserts that it covers the driver registry
+// exactly, so the three surfaces cannot drift from the drivers that the CLI
+// can actually use.
 type Scheme struct {
 	// Scheme is the key that the driver registry uses.
 	Scheme string
@@ -32,6 +33,7 @@ const (
 	groupImage     = "Start from an OCI image"
 	groupContainer = "Use a running engine container"
 	groupDirect    = "Connect directly"
+	groupCmd       = "Provision with a command"
 	groupLegacy    = "Legacy Docker schemes"
 )
 
@@ -44,6 +46,8 @@ var schemeCatalog = []Scheme{
 	{Scheme: "image+podman", Value: "image+podman://IMAGE", Group: groupImage},
 	{Scheme: "image+finch", Value: "image+finch://IMAGE", Group: groupImage},
 	{Scheme: "image+nerdctl", Value: "image+nerdctl://IMAGE", Group: groupImage},
+	{Scheme: "image+kubectl", Value: "image+kubectl://IMAGE", Note: "runs the engine as a Kubernetes pod", Group: groupImage},
+	{Scheme: "kubectl", Value: "kubectl://IMAGE", Note: "the same as image+kubectl", Group: groupImage},
 
 	{Scheme: "container", Value: "container://NAME", Group: groupContainer, Primary: true},
 	{Scheme: "container+docker", Value: "container+docker://NAME", Group: groupContainer},
@@ -58,6 +62,8 @@ var schemeCatalog = []Scheme{
 	{Scheme: "kube-pod", Value: "kube-pod://POD", Group: groupDirect, Primary: true},
 	{Scheme: "unix", Value: "unix://PATH", Group: groupDirect, Primary: true},
 
+	{Scheme: "cmd", Value: "cmd://COMMAND[?arg=ARG...]", Note: "COMMAND provisions the engine and serves it on stdio; add url=true if it prints an engine URL instead", Group: groupCmd},
+
 	{Scheme: "docker-image", Value: "docker-image://IMAGE", Group: groupLegacy, Deprecated: true},
 	{Scheme: "docker-container", Value: "docker-container://NAME", Group: groupLegacy, Deprecated: true},
 }
@@ -70,8 +76,10 @@ func SchemeCatalog() []Scheme {
 // RegisteredSchemes returns the driver registry keys, sorted. Error messages
 // use it, so it reports what the client can dial, not what help documents.
 func RegisteredSchemes() []string {
-	names := make([]string, 0, len(drivers))
-	for name := range drivers {
+	driverMu.RLock()
+	defer driverMu.RUnlock()
+	names := make([]string, 0, len(driverMux))
+	for name := range driverMux {
 		names = append(names, name)
 	}
 	sort.Strings(names)

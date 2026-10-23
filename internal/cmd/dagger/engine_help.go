@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dagger/dagger/engine/client/drivers"
+	"github.com/dagger/dagger/engine/client"
 )
 
 // engineHelpCmd is a help topic, not a command: it has no Run, so Cobra lists
@@ -50,7 +50,7 @@ EXAMPLES
 
   Select an engine for every command in a shell session:
     export DAGGER_ENGINE=cloud
-`, drivers.SchemeHelp(), engineEnv, cloudEngineEnv, RunnerHostEnv, engineEnv, cloudEngineEnv, RunnerHostEnv),
+`, client.SchemeHelp(), engineEnv, cloudEngineEnv, RunnerHostEnv, engineEnv, cloudEngineEnv, RunnerHostEnv),
 }
 
 func init() {

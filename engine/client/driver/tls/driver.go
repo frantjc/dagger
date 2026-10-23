@@ -1,4 +1,4 @@
-package drivers
+package tlsdriver
 
 import (
 	"context"
@@ -10,12 +10,33 @@ import (
 	"os"
 	"time"
 
+	"github.com/dagger/dagger/engine/client"
+	"github.com/dagger/dagger/engine/client/driver"
 	"github.com/dagger/dagger/internal/buildkit/client/connhelper"
 )
 
+func init() {
+	client.RegisterDriver(
+		driver.NewDialDriver(connhTLS, driver.AvailableFunc(available)),
+		"tls",
+	)
+}
+
 const (
-	TLSDialTimeout = 10 * time.Second
+	DialTimeout = 10 * time.Second
 )
+
+// available validates the URL and reads any certificate files that it names,
+// so that a bad host or bad certificate paths fail before anything is dialed.
+func available(_ context.Context, u *url.URL) error {
+	if u.Hostname() == "" {
+		return fmt.Errorf("tls engine address must be tls://HOST[:PORT], got %q", u.Redacted())
+	}
+	if _, err := buildTLSConfig(u); err != nil {
+		return fmt.Errorf("failed to build TLS config: %w", err)
+	}
+	return nil
+}
 
 func connhTLS(u *url.URL) (*connhelper.ConnectionHelper, error) {
 	host := u.Hostname()
@@ -38,7 +59,7 @@ func connhTLS(u *url.URL) (*connhelper.ConnectionHelper, error) {
 
 	return &connhelper.ConnectionHelper{
 		ContextDialer: func(ctx context.Context, addr string) (net.Conn, error) {
-			dialer := net.Dialer{Timeout: TLSDialTimeout}
+			dialer := net.Dialer{Timeout: DialTimeout}
 			rawConn, err := dialer.DialContext(ctx, "tcp", serverAddr)
 			if err != nil {
 				return nil, fmt.Errorf("failed to dial TCP to %s: %w", serverAddr, err)
@@ -46,7 +67,7 @@ func connhTLS(u *url.URL) (*connhelper.ConnectionHelper, error) {
 
 			tlsConn := tls.Client(rawConn, tlsConfig)
 
-			handshakeCtx, cancel := context.WithTimeout(ctx, TLSHandshakeTimeout)
+			handshakeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			defer cancel()
 
 			if err := tlsConn.HandshakeContext(handshakeCtx); err != nil {

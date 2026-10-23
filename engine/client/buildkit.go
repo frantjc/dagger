@@ -13,7 +13,6 @@ import (
 	"google.golang.org/grpc/backoff"
 
 	"github.com/dagger/dagger/engine"
-	"github.com/dagger/dagger/engine/client/drivers"
 )
 
 const (
@@ -21,7 +20,7 @@ const (
 	envDaggerCloudCachetoken = "_EXPERIMENTAL_DAGGER_CACHESERVICE_TOKEN"
 )
 
-func newBuildkitClient(ctx context.Context, remote *url.URL, connector drivers.Connector) (_ *bkclient.Client, _ *bkclient.Info, rerr error) {
+func newBuildkitClient(ctx context.Context, remote *url.URL, connector Connector) (_ *bkclient.Client, _ *bkclient.Info, rerr error) {
 	backoffConfig := backoff.DefaultConfig
 	backoffConfig.MaxDelay = 30 * time.Second
 	opts := []bkclient.ClientOpt{

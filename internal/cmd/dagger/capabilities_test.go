@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dagger/dagger/engine/client/drivers"
+	"github.com/dagger/dagger/engine/client"
 	"github.com/dagger/dagger/internal/cobradocs"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -136,7 +136,7 @@ func TestMayCallEngineFlags(t *testing.T) {
 	// help topic that carries the full catalog.
 	usage := flags.Lookup("engine").Usage
 	require.NotContains(t, usage, "\n")
-	require.Contains(t, usage, drivers.SchemeSummary())
+	require.Contains(t, usage, client.SchemeSummary())
 	require.Contains(t, usage, "dagger help engine")
 	require.Contains(t, usage, engineEnv)
 	for _, value := range []string{"cloud", "image://", "container://", "ssh://", "unix://"} {

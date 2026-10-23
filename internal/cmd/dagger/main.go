@@ -44,7 +44,7 @@ import (
 	"github.com/dagger/dagger/dagql/dagui"
 	"github.com/dagger/dagger/dagql/idtui"
 	"github.com/dagger/dagger/engine"
-	"github.com/dagger/dagger/engine/client/drivers"
+	engineclient "github.com/dagger/dagger/engine/client"
 	"github.com/dagger/dagger/engine/client/pathutil"
 	"github.com/dagger/dagger/engine/slog"
 	enginetel "github.com/dagger/dagger/engine/telemetry"
@@ -465,7 +465,7 @@ const defaultShellCommandOnError = "/bin/sh"
 // usage message of every command that can call the engine.
 var engineFlagUsage = fmt.Sprintf(
 	"Select the engine: %s (or set %s; run 'dagger help engine' for details)",
-	drivers.SchemeSummary(), engineEnv,
+	engineclient.SchemeSummary(), engineEnv,
 )
 
 func installMayCallEngineFlags(flags *pflag.FlagSet) {
@@ -551,13 +551,6 @@ func execXRelease(ctx context.Context) error {
 		msg += fmt.Sprintf("; resolved to %s; pin with %s=%s or --x-release=%s", downloadRef, daggerXReleaseEnv, downloadRef, downloadRef)
 	}
 	fmt.Fprintln(stderr, xReleaseLogLine(msg))
-
-	if shouldCleanupOldEngines() {
-		_ = drivers.CleanupOldEngines(ctx, []string{
-			engineVersion(engine.Tag),
-			engineVersion(engineRef),
-		})
-	}
 
 	args := xReleaseProcessArgs(os.Args[1:])
 	env, engineEnvs := xReleaseProcessEnv(os.Environ())
@@ -657,15 +650,6 @@ func xReleaseProcessEnv(environ []string) (env []string, engineEnvs []string) {
 		env = append(env, "DAGGER_LEAVE_OLD_ENGINE=1")
 	}
 	return env, engineEnvs
-}
-
-func shouldCleanupOldEngines() bool {
-	val, ok := os.LookupEnv("DAGGER_LEAVE_OLD_ENGINE")
-	if !ok {
-		return true
-	}
-	leaveOldEngine, _ := strconv.ParseBool(val)
-	return !leaveOldEngine
 }
 
 // A command can share a global flag's value under its long name while using
@@ -1157,7 +1141,7 @@ func installRootGlobalFlags() {
 // completeEngineFlag offers every non-deprecated engine selector prefix. The
 // values end in "://", so completion must not append a space after them.
 func completeEngineFlag(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
-	return drivers.SchemeCompletions(), cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp
+	return engineclient.SchemeCompletions(), cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp
 }
 
 // IsExperimental reports whether cmd (or any ancestor) is marked experimental.
