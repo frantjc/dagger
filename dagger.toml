@@ -13,6 +13,9 @@ source = ".dagger/modules/dev"
 # active Docker context points somewhere else.
 docker = "unix:///var/run/docker.sock"
 
+[modules.fork]
+source = ".dagger/modules/fork-dev"
+
 [modules.docs]
 source = ".dagger/modules/docs-dev"
 legacy-default-path = true
