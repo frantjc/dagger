@@ -1,4 +1,4 @@
-package drivers
+package client
 
 import (
 	"fmt"
@@ -8,9 +8,10 @@ import (
 
 // Scheme describes one engine selector value for user-facing help. The catalog
 // below is the single source of truth for the `--engine` flag usage, the
-// `dagger help engine` topic, and shell completion. A test asserts that it
-// covers the driver registry exactly, so the three surfaces cannot drift from
-// the drivers that the CLI can actually use.
+// `dagger help engine` topic, and shell completion. A test in the CLI package,
+// which imports every driver, asserts that it covers the driver registry
+// exactly, so the three surfaces cannot drift from the drivers that the CLI
+// can actually use.
 type Scheme struct {
 	// Scheme is the key that the driver registry uses.
 	Scheme string
@@ -70,8 +71,10 @@ func SchemeCatalog() []Scheme {
 // RegisteredSchemes returns the driver registry keys, sorted. Error messages
 // use it, so it reports what the client can dial, not what help documents.
 func RegisteredSchemes() []string {
-	names := make([]string, 0, len(drivers))
-	for name := range drivers {
+	driverMu.RLock()
+	defer driverMu.RUnlock()
+	names := make([]string, 0, len(driverMux))
+	for name := range driverMux {
 		names = append(names, name)
 	}
 	sort.Strings(names)

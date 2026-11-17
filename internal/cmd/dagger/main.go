@@ -43,7 +43,8 @@ import (
 	"github.com/dagger/dagger/dagql/dagui"
 	"github.com/dagger/dagger/dagql/idtui"
 	"github.com/dagger/dagger/engine"
-	"github.com/dagger/dagger/engine/client/drivers"
+	engineclient "github.com/dagger/dagger/engine/client"
+	dockerdriver "github.com/dagger/dagger/engine/client/driver/docker"
 	"github.com/dagger/dagger/engine/client/pathutil"
 	"github.com/dagger/dagger/engine/slog"
 	enginetel "github.com/dagger/dagger/engine/telemetry"
@@ -481,7 +482,7 @@ const defaultShellCommandOnError = "/bin/sh"
 // usage message of every command that can call the engine.
 var engineFlagUsage = fmt.Sprintf(
 	"Select the engine: %s (or set %s; run 'dagger help engine' for details)",
-	drivers.SchemeSummary(), engineEnv,
+	engineclient.SchemeSummary(), engineEnv,
 )
 
 func installMayCallEngineFlags(flags *pflag.FlagSet) {
@@ -571,7 +572,7 @@ func execXRelease(ctx context.Context) error {
 	fmt.Fprintln(stderr, xReleaseLogLine(msg))
 
 	if shouldCleanupOldEngines() {
-		_ = drivers.CleanupOldEngines(ctx, []string{
+		_ = dockerdriver.CleanupOldEngines(ctx, []string{
 			engineVersion(engine.Tag),
 			engineVersion(engineRef),
 		})
@@ -678,7 +679,7 @@ func xReleaseProcessEnv(environ []string) (env []string, engineEnvs []string) {
 }
 
 func shouldCleanupOldEngines() bool {
-	leave, ok := drivers.LeaveOldEngines()
+	leave, ok := engineclient.LeaveOldEngines()
 	return !ok || !leave
 }
 
@@ -1201,7 +1202,7 @@ func installRootGlobalFlags() {
 // completeEngineFlag offers every non-deprecated engine selector prefix. The
 // values end in "://", so completion must not append a space after them.
 func completeEngineFlag(*cobra.Command, []string, string) ([]cobra.Completion, cobra.ShellCompDirective) {
-	return drivers.SchemeCompletions(), cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp
+	return engineclient.SchemeCompletions(), cobra.ShellCompDirectiveNoSpace | cobra.ShellCompDirectiveNoFileComp
 }
 
 // IsExperimental reports whether cmd (or any ancestor) is marked experimental.
