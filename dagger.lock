@@ -94,6 +94,7 @@
 ["","oci-latest",["docker.io/tmknom/markdownlint"],"0.32.2"]
 ["","oci-latest",["ghcr.io/miniscruff/changie"],"v1.26.0"]
 ["","oci-sha",["cgr.dev/chainguard/wolfi-base:latest"],"sha256:81211e15a86ea1d5357f284482af45730c51de45eaf10ad9ce205d6bfc2df323"]
+["","oci-sha",["docker.io/alpine/git:v2.54.1"],"sha256:2306e2b05ee0ef99f5d25b0779f645b24ae9f91ba187107503592fcdfe78da3a"]
 ["","oci-sha",["docker.io/golangci/golangci-lint:v2.14.0-alpine"],"sha256:25925c95ebdc7aee39ecc0e6f4f33ac27b9a91718bc65fdf18a1a5c4c9325ee4"]
 ["","oci-sha",["docker.io/library/alpine:3.16.2"],"sha256:65a2763f593ae85fab3b5406dc9e80f744ec5b449f269b699b5efd37a07ad32e"]
 ["","oci-sha",["docker.io/library/alpine:3.20"],"sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"]
