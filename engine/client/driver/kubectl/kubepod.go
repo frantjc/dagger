@@ -43,11 +43,12 @@ func kubePodAvailable(ctx context.Context, u *url.URL) error {
 	if _, err := exec.LookPath("kubectl"); err != nil {
 		return fmt.Errorf("the kube-pod driver requires kubectl: %w", err)
 	}
-	if err := checkAccess(ctx, spec.Context, spec.Namespace, connectAccess...); err != nil {
+	sc := scope{Kubeconfig: spec.Kubeconfig, Context: spec.Context, Namespace: spec.Namespace}
+	if err := checkAccess(ctx, sc, connectAccess...); err != nil {
 		return err
 	}
 
-	args := append(kubectlScope(spec.Context, spec.Namespace), "get", "pod", spec.Pod, "-o", "name")
+	args := append(sc.args(), "get", "pod", spec.Pod, "-o", "name")
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
 	if _, stderr, err := traceexec.ExecOutput(ctx, cmd, telemetry.Encapsulated()); err != nil {
 		return fmt.Errorf("pod %q is not usable: %w%s", spec.Pod, err, stderrDetail(stderr))
@@ -56,12 +57,11 @@ func kubePodAvailable(ctx context.Context, u *url.URL) error {
 }
 
 // checkAccess verifies that the cluster is reachable and that the current
-// user may do everything in needs, in the given context and namespace (the
-// kubeconfig defaults if empty).
-func checkAccess(ctx context.Context, kctx, namespace string, needs ...access) error {
-	scope := describeScope(kctx, namespace)
+// user may do everything in needs, in the given scope.
+func checkAccess(ctx context.Context, sc scope, needs ...access) error {
+	scope := sc.String()
 	for _, need := range needs {
-		args := append(kubectlScope(kctx, namespace), "auth", "can-i", need.verb, need.resource)
+		args := append(sc.args(), "auth", "can-i", need.verb, need.resource)
 		cmd := exec.CommandContext(ctx, "kubectl", args...)
 		// `auth can-i` exits non-zero both for "no" and for failing to ask, so
 		// the answer on stdout is what tells them apart.
@@ -80,23 +80,49 @@ func checkAccess(ctx context.Context, kctx, namespace string, needs ...access) e
 	return nil
 }
 
-func kubectlScope(kctx, namespace string) []string {
-	var args []string
-	if kctx != "" {
-		args = append(args, "--context="+kctx)
+// scope selects the cluster and namespace that kubectl talks to. Empty fields
+// leave kubectl's own defaults: $KUBECONFIG or ~/.kube/config, its current
+// context, and that context's namespace.
+type scope struct {
+	Kubeconfig string
+	Context    string
+	Namespace  string
+}
+
+// scopeFromQuery reads the scope from a driver URL's kubeconfig, context and
+// namespace parameters.
+func scopeFromQuery(q url.Values) scope {
+	return scope{
+		Kubeconfig: q.Get("kubeconfig"),
+		Context:    q.Get("context"),
+		Namespace:  q.Get("namespace"),
 	}
-	if namespace != "" {
-		args = append(args, "--namespace="+namespace)
+}
+
+// args are the kubectl flags that select the scope.
+func (s scope) args() []string {
+	var args []string
+	if s.Kubeconfig != "" {
+		args = append(args, "--kubeconfig="+s.Kubeconfig)
+	}
+	if s.Context != "" {
+		args = append(args, "--context="+s.Context)
+	}
+	if s.Namespace != "" {
+		args = append(args, "--namespace="+s.Namespace)
 	}
 	return args
 }
 
-func describeScope(kctx, namespace string) string {
-	kctx = cmp.Or(kctx, "the current context")
-	if namespace == "" {
-		return kctx
+func (s scope) String() string {
+	desc := cmp.Or(s.Context, "the current context")
+	if s.Kubeconfig != "" {
+		desc += fmt.Sprintf(" of kubeconfig %q", s.Kubeconfig)
 	}
-	return fmt.Sprintf("%s, namespace %q", kctx, namespace)
+	if s.Namespace != "" {
+		desc += fmt.Sprintf(", namespace %q", s.Namespace)
+	}
+	return desc
 }
 
 func stderrDetail(stderr string) string {
