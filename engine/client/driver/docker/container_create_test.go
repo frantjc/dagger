@@ -1,9 +1,10 @@
-package drivers
+package dockerdriver
 
 import (
 	"context"
 	"errors"
 	"net"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/dagger/dagger/engine/client"
 	"github.com/dagger/dagger/engine/client/imageload"
 )
 
@@ -22,10 +24,13 @@ func TestImageDriverCreateEnablesLoopbackDebugListener(t *testing.T) {
 	backend := &captureContainerBackend{}
 	driver := &imageDriver{backend: backend}
 
+	image, err := client.ParseImageTarget(&url.URL{Scheme: "image", Host: "registry.example.com", Path: "/dagger-engine:v0.21.0"}, "container")
+	require.NoError(t, err)
+
 	target, err := driver.create(ctx, containerCreateOpts{
-		imageRef: "registry.example.com/dagger-engine:v0.21.0",
-		port:     1234,
-	}, &DriverOpts{})
+		ImageTarget: image,
+		port:        1234,
+	}, &client.DriverOpts{})
 	require.NoError(t, err)
 	require.Equal(t, "dagger-engine-v0.21.0", target.Host)
 
@@ -53,9 +58,12 @@ func TestImageDriverCreateStartsExistingEngineWithoutListing(t *testing.T) {
 	driver := &imageDriver{backend: backend}
 
 	target, err := driver.create(t.Context(), containerCreateOpts{
-		imageRef: "registry.example.com/dagger-engine:v0.21.0",
-		cleanup:  true,
-	}, &DriverOpts{})
+		ImageTarget: &client.ImageTarget{
+			Ref:     "registry.example.com/dagger-engine:v0.21.0",
+			Name:    "dagger-engine-v0.21.0",
+			Cleanup: true,
+		},
+	}, &client.DriverOpts{})
 	require.NoError(t, err)
 	require.Equal(t, "dagger-engine-v0.21.0", target.Host)
 
@@ -89,8 +97,11 @@ func TestImageDriverCreatePreservesExistingEngineStartFailure(t *testing.T) {
 	driver := &imageDriver{backend: backend}
 
 	_, err := driver.create(t.Context(), containerCreateOpts{
-		imageRef: "registry.example.com/dagger-engine:v0.21.0",
-	}, &DriverOpts{})
+		ImageTarget: &client.ImageTarget{
+			Ref:  "registry.example.com/dagger-engine:v0.21.0",
+			Name: "dagger-engine-v0.21.0",
+		},
+	}, &client.DriverOpts{})
 	require.ErrorIs(t, err, startErr)
 	require.Equal(t, []string{
 		"start dagger-engine-v0.21.0",
@@ -113,8 +124,11 @@ func TestImageDriverCreateRetriesEngineCreatedConcurrently(t *testing.T) {
 	driver := &imageDriver{backend: backend}
 
 	target, err := driver.create(t.Context(), containerCreateOpts{
-		imageRef: "registry.example.com/dagger-engine:v0.21.0",
-	}, &DriverOpts{})
+		ImageTarget: &client.ImageTarget{
+			Ref:  "registry.example.com/dagger-engine:v0.21.0",
+			Name: "dagger-engine-v0.21.0",
+		},
+	}, &client.DriverOpts{})
 	require.NoError(t, err)
 	require.Equal(t, "dagger-engine-v0.21.0", target.Host)
 	require.Equal(t, []string{
@@ -197,7 +211,9 @@ type captureContainerBackend struct {
 	runOpts runOpts
 }
 
-func (b *captureContainerBackend) Available(context.Context) (bool, error) {
+func (b *captureContainerBackend) Name() string { return "capture" }
+
+func (b *captureContainerBackend) Available(context.Context, *url.URL) (bool, error) {
 	return true, nil
 }
 

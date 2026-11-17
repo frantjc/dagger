@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/dagger/dagger/engine"
-	"github.com/dagger/dagger/engine/client/drivers"
 	enginetel "github.com/dagger/dagger/engine/telemetry"
 	"github.com/dagger/dagger/internal/cloud"
 	"github.com/stretchr/testify/require"
@@ -275,7 +274,7 @@ func TestClientMetadataCarriesTheCloudClaim(t *testing.T) {
 
 	var spec cloud.EngineSpec
 	require.NoError(t, json.Unmarshal([]byte(`{"instance_id":"engine-1","claim_id":"claim-from-assignment"}`), &spec))
-	connected := &Client{connector: &drivers.DaggerCloudConnector{EngineSpec: spec}}
+	connected := &Client{connector: cloudSpecConnector{spec}}
 	md := connected.clientMetadata()
 	require.Equal(t, "claim-from-assignment", md.CloudClaimID)
 	require.Equal(t, "engine-1", md.CloudScaleOutEngineID)
@@ -726,3 +725,13 @@ func TestConnectSessionAttachablesConnOutlivesHandshake(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "x", string(buf))
 }
+
+// cloudSpecConnector reports the engine and claim of a Dagger Cloud engine
+// assignment, as the Dagger Cloud driver's connector does.
+type cloudSpecConnector struct{ spec cloud.EngineSpec }
+
+func (c cloudSpecConnector) Connect(context.Context) (net.Conn, error) {
+	return nil, errors.New("not connectable")
+}
+func (c cloudSpecConnector) EngineID() string { return c.spec.InstanceID }
+func (c cloudSpecConnector) ClaimID() string  { return c.spec.ClaimID }

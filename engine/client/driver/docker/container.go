@@ -1,4 +1,4 @@
-package drivers
+package dockerdriver
 
 import (
 	"context"
@@ -7,59 +7,21 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/adrg/xdg"
 	telemetry "github.com/dagger/otel-go"
-	"github.com/google/go-containerregistry/pkg/name"
 	"go.opentelemetry.io/otel"
 
+	"github.com/dagger/dagger/engine/client"
 	"github.com/dagger/dagger/engine/client/imageload"
 	"github.com/dagger/dagger/engine/config"
 	"github.com/dagger/dagger/engine/distconsts"
 	"github.com/dagger/dagger/engine/slog"
-	"github.com/dagger/dagger/internal/userconfig"
 )
-
-func init() {
-	register("docker-image", dockerImageDriver)         // legacy
-	register("docker-container", dockerContainerDriver) // legacy
-
-	register("image",
-		dockerImageDriver,
-		appleImageDriver,
-		podmanImageDriver,
-		finchImageDriver,
-		nerdctlImageDriver,
-	)
-	register("container",
-		dockerContainerDriver,
-		appleContainerDriver,
-		podmanContainerDriver,
-		finchContainerDriver,
-		nerdctlContainerDriver,
-	)
-
-	register("image+docker", dockerImageDriver)
-	register("container+docker", dockerContainerDriver)
-
-	register("image+apple", appleImageDriver)
-	register("container+apple", appleContainerDriver)
-
-	register("image+podman", podmanImageDriver)
-	register("container+podman", podmanContainerDriver)
-
-	register("image+finch", finchImageDriver)
-	register("container+finch", finchContainerDriver)
-
-	register("image+nerdctl", nerdctlImageDriver)
-	register("container+nerdctl", nerdctlContainerDriver)
-}
 
 var (
 	dockerImageDriver     = &imageDriver{docker{cmd: "docker"}}
@@ -78,17 +40,68 @@ var (
 	finchContainerDriver = &containerDriver{docker{cmd: "finch"}}
 )
 
-var (
-	engineConfigPath       = filepath.Join(xdg.ConfigHome, "dagger", "engine.json")
-	engineCertificatesPath = filepath.Join(xdg.ConfigHome, "dagger", "ca-certificates")
-)
+func init() {
+	client.RegisterDriver(dockerImageDriver,
+		"docker-image", // legacy
+		"image",
+		"image+docker",
+	)
+
+	client.RegisterDriver(appleImageDriver,
+		"image",
+		"image+apple",
+	)
+
+	client.RegisterDriver(podmanImageDriver,
+		"image",
+		"image+podman",
+	)
+
+	client.RegisterDriver(finchImageDriver,
+		"image",
+		"image+finch",
+	)
+
+	client.RegisterDriver(nerdctlImageDriver,
+		"image",
+		"image+nerdctl",
+	)
+
+	client.RegisterDriver(dockerContainerDriver,
+		"docker-container", // legacy
+		"container",
+		"container+docker",
+	)
+
+	client.RegisterDriver(appleContainerDriver,
+		"container",
+		"container+apple",
+	)
+
+	client.RegisterDriver(podmanContainerDriver,
+		"container",
+		"container+podman",
+	)
+
+	client.RegisterDriver(finchContainerDriver,
+		"container",
+		"container+finch",
+	)
+
+	client.RegisterDriver(nerdctlContainerDriver,
+		"container",
+		"container+nerdctl",
+	)
+}
 
 // containerBackend is a generic backend for containers that can be plugged
 // into image/container drivers. This allows us to have all the exact same
 // logic between different container providers, but have different backend
 // commands.
 type containerBackend interface {
-	Available(ctx context.Context) (bool, error)
+	// Name identifies the backend to the user, e.g. in error messages.
+	Name() string
+	Available(context.Context, *url.URL) (bool, error)
 
 	ImagePull(ctx context.Context, image string) error
 	ImageExists(ctx context.Context, image string) (bool, error)
@@ -127,23 +140,23 @@ type imageDriver struct {
 	backend containerBackend
 }
 
-func (d *imageDriver) Available(ctx context.Context) (bool, error) {
-	return d.backend.Available(ctx)
+func (d *imageDriver) Available(ctx context.Context, u *url.URL) (bool, error) {
+	return d.backend.Available(ctx, u)
 }
 
-func (d *imageDriver) Provision(ctx context.Context, target *url.URL, opts *DriverOpts) (Connector, error) {
-	cleanup := cleanupOldEngines(target.Query())
+func (d *imageDriver) Provision(ctx context.Context, target *url.URL, opts *client.DriverOpts) (client.Connector, error) {
+	image, err := client.ParseImageTarget(target, "container")
+	if err != nil {
+		return nil, err
+	}
 
 	port, _ := strconv.Atoi(target.Query().Get("port"))
-	target, err := d.create(ctx, containerCreateOpts{
-		imageRef:      target.Host + target.Path,
-		containerName: target.Query().Get("container"),
-		volumeName:    target.Query().Get("volume"),
-		cleanup:       cleanup,
-		port:          port,
-		env:           target.Query()["env"],
-		cpus:          target.Query().Get("cpus"),
-		memory:        target.Query().Get("memory"),
+	target, err = d.create(ctx, containerCreateOpts{
+		ImageTarget: image,
+		volumeName:  target.Query().Get("volume"),
+		port:        port,
+		cpus:        target.Query().Get("cpus"),
+		memory:      target.Query().Get("memory"),
 	}, opts)
 	if err != nil {
 		return nil, err
@@ -154,32 +167,6 @@ func (d *imageDriver) Provision(ctx context.Context, target *url.URL, opts *Driv
 		values:  target.Query(),
 		warm:    newWarmTunnels(),
 	}, nil
-}
-
-// LeaveOldEngines reports whether the user asked to keep engine containers of
-// other versions: DAGGER_LEAVE_OLD_ENGINE when set, otherwise the
-// [engine] leave_old_engines setting of the user config file. ok is false when
-// neither is set.
-func LeaveOldEngines() (leave bool, ok bool) {
-	if val, ok := os.LookupEnv("DAGGER_LEAVE_OLD_ENGINE"); ok {
-		leave, _ := strconv.ParseBool(val)
-		return leave, true
-	}
-	return userconfig.LeaveOldEngines()
-}
-
-// cleanupOldEngines decides whether provisioning removes engines of other
-// versions. LeaveOldEngines wins over the runner URL's cleanup parameter;
-// cleanup is the default.
-func cleanupOldEngines(query url.Values) bool {
-	if leave, ok := LeaveOldEngines(); ok {
-		return !leave
-	}
-	if val := query.Get("cleanup"); val != "" {
-		cleanup, _ := strconv.ParseBool(val)
-		return cleanup
-	}
-	return true
 }
 
 func (d *imageDriver) ImageLoader(ctx context.Context) imageload.Backend {
@@ -317,11 +304,26 @@ type containerDriver struct {
 	backend containerBackend
 }
 
-func (d *containerDriver) Available(ctx context.Context) (bool, error) {
-	return d.backend.Available(ctx)
+func (d *containerDriver) Available(ctx context.Context, u *url.URL) (bool, error) {
+	if u.Host == "" {
+		return false, fmt.Errorf("container engine address must name a container, got %q", u.Redacted())
+	}
+
+	if available, err := d.backend.Available(ctx, u); err != nil || !available {
+		return false, err
+	}
+
+	exists, err := d.backend.ContainerExists(ctx, u.Host)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, &client.UnavailableError{Reason: fmt.Sprintf("%s: container %q not found", d.backend.Name(), u.Host)}
+	}
+	return true, nil
 }
 
-func (d *containerDriver) Provision(ctx context.Context, target *url.URL, opts *DriverOpts) (Connector, error) {
+func (d *containerDriver) Provision(ctx context.Context, target *url.URL, opts *client.DriverOpts) (client.Connector, error) {
 	return containerConnector{
 		backend: d.backend,
 		host:    target.Host,
@@ -392,19 +394,16 @@ func (d containerConnector) dial(ctx context.Context) (net.Conn, error) {
 	return d.backend.ContainerDial(context.WithoutCancel(ctx), d.host, args)
 }
 
+func (d containerConnector) ClaimID() string {
+	return ""
+}
+
 func (d containerConnector) EngineID() string {
 	// not supported yet
 	return ""
 }
 
-func (d containerConnector) ClaimID() string {
-	return ""
-}
-
 const (
-	// trim image digests to 16 characters to makeoutput more readable
-	hashLen                      = 16
-	containerNamePrefix          = "dagger-engine-"
 	defaultDebugListenerAddress  = "127.0.0.1:6060"
 	leftoverEngineCleanupTimeout = 10 * time.Minute
 )
@@ -412,16 +411,11 @@ const (
 const InstrumentationLibrary = "dagger.io/client.drivers"
 
 type containerCreateOpts struct {
-	imageRef string
+	*client.ImageTarget
 
-	containerName string
-	volumeName    string
-
-	cleanup bool
+	volumeName string
 
 	port int
-
-	env []string
 
 	cpus   string
 	memory string
@@ -432,27 +426,19 @@ type containerCreateOpts struct {
 // previous executions of the engine at different versions (which
 // are identified by looking for containers with the prefix
 // "dagger-engine-").
-func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopts *DriverOpts) (target *url.URL, rerr error) {
+func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopts *client.DriverOpts) (target *url.URL, rerr error) {
 	ctx, span := otel.Tracer("").Start(ctx, "create container")
 	defer telemetry.EndWithCause(span, &rerr)
 	slog := slog.SpanLogger(ctx, InstrumentationLibrary)
 
-	containerName := opts.containerName
-	if containerName == "" {
-		id, err := resolveImageID(opts.imageRef)
-		if err != nil {
-			return nil, err
-		}
-		// run the container using that id in the name
-		containerName = containerNamePrefix + id
-	}
+	containerName := opts.Name
 
 	// Starting an existing engine is a no-op when it is already running, so
 	// use start itself as the fast existence check. Only when it fails does
 	// the command list containers before creating a new engine.
 	startErr := d.backend.ContainerStart(ctx, containerName)
 	if startErr == nil {
-		if opts.cleanup {
+		if opts.Cleanup {
 			go d.sweepLeftoverEngines(ctx, containerName)
 		}
 		return &url.URL{Host: containerName}, nil
@@ -475,7 +461,7 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 		if err := d.backend.ContainerStart(ctx, containerName); err != nil {
 			return nil, fmt.Errorf("failed to start container: %w", err)
 		}
-		if opts.cleanup {
+		if opts.Cleanup {
 			go d.sweepLeftoverEngines(ctx, containerName)
 		}
 		return &url.URL{Host: containerName}, nil
@@ -496,18 +482,18 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 			if err := d.backend.ContainerStart(ctx, leftoverEngine); err != nil {
 				return nil, fmt.Errorf("failed to start container: %w", err)
 			}
-			d.garbageCollectEngines(ctx, opts.cleanup, nil, slices.Delete(leftoverEngines, i, i+1))
+			d.garbageCollectEngines(ctx, opts.Cleanup, nil, slices.Delete(leftoverEngines, i, i+1))
 			return &url.URL{Host: containerName}, nil
 		}
 	}
 
 	// ensure the image is pulled
-	exists, err := d.backend.ImageExists(ctx, opts.imageRef)
+	exists, err := d.backend.ImageExists(ctx, opts.Ref)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect image: %w", err)
 	}
 	if !exists {
-		if err := d.backend.ImagePull(ctx, opts.imageRef); err != nil {
+		if err := d.backend.ImagePull(ctx, opts.Ref); err != nil {
 			return nil, fmt.Errorf("failed to pull image: %w", err)
 		}
 	}
@@ -518,34 +504,34 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 	}
 
 	runOptions := runOpts{
-		image:      opts.imageRef,
+		image:      opts.Ref,
 		volumes:    []string{volume},
 		privileged: true,
 		args:       []string{"--debug", "--debugaddr", defaultDebugListenerAddress},
-		env:        opts.env,
+		env:        opts.Env,
 		cpus:       opts.cpus,
 		memory:     opts.memory,
 	}
 
 	// mount the config path
-	if _, err := os.Stat(engineConfigPath); err == nil {
-		runOptions.volumes = append(runOptions.volumes, engineConfigPath+":"+config.DefaultConfigPath())
+	if _, err := os.Stat(client.EngineConfigPath); err == nil {
+		runOptions.volumes = append(runOptions.volumes, client.EngineConfigPath+":"+config.DefaultConfigPath())
 	} else if !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("could not stat config", "path", engineConfigPath, "error", err)
+		slog.Warn("could not stat config", "path", client.EngineConfigPath, "error", err)
 	}
 	// mount the certificates path
-	if _, err := os.Stat(engineCertificatesPath); err == nil {
-		runOptions.volumes = append(runOptions.volumes, engineCertificatesPath+":"+distconsts.EngineCustomCACertsDir)
+	if _, err := os.Stat(client.EngineCertificatesPath); err == nil {
+		runOptions.volumes = append(runOptions.volumes, client.EngineCertificatesPath+":"+distconsts.EngineCustomCACertsDir)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("could not stat certificates", "path", engineCertificatesPath, "error", err)
+		slog.Warn("could not stat certificates", "path", client.EngineCertificatesPath, "error", err)
 	}
 
 	if dopts.DaggerCloudToken != "" {
-		runOptions.env = append(runOptions.env, fmt.Sprintf("%s=%s", EnvDaggerCloudToken, dopts.DaggerCloudToken))
+		runOptions.env = append(runOptions.env, fmt.Sprintf("%s=%s", client.EnvDaggerCloudToken, dopts.DaggerCloudToken))
 	}
 	if dopts.GPUSupport != "" {
 		runOptions.gpus = true
-		runOptions.env = append(runOptions.env, fmt.Sprintf("%s=%s", EnvGPUSupport, dopts.GPUSupport))
+		runOptions.env = append(runOptions.env, fmt.Sprintf("%s=%s", client.EnvGPUSupport, dopts.GPUSupport))
 	}
 	if opts.port != 0 {
 		runOptions.ports = append(runOptions.ports, fmt.Sprintf("%d:%d", opts.port, opts.port))
@@ -564,7 +550,7 @@ func (d *imageDriver) create(ctx context.Context, opts containerCreateOpts, dopt
 	// garbage collect any other containers with the same name pattern, which
 	// we assume to be leftover from previous runs of the engine using an older
 	// version
-	d.garbageCollectEngines(ctx, opts.cleanup, nil, leftoverEngines)
+	d.garbageCollectEngines(ctx, opts.Cleanup, nil, leftoverEngines)
 
 	return &url.URL{Host: containerName}, nil
 }
@@ -604,7 +590,7 @@ func engineNames(versions []string) []string {
 	names := make([]string, 0, len(versions))
 	for _, version := range versions {
 		if version != "" {
-			names = append(names, containerNamePrefix+version)
+			names = append(names, client.EngineInstancePrefix+version)
 		}
 	}
 	return names
@@ -613,7 +599,7 @@ func engineNames(versions []string) []string {
 // CleanupOldEngines removes local engine containers while preserving the
 // versions that are expected to be used by the current command.
 func CleanupOldEngines(ctx context.Context, preserveVersions []string) error {
-	driver, err := GetDriver(ctx, "image")
+	driver, err := client.OpenDriver(ctx, "image://")
 	if err != nil {
 		return err
 	}
@@ -637,31 +623,9 @@ func (d *imageDriver) collectLeftoverEngines(ctx context.Context, additionalName
 
 	var filteredEngines []string
 	for _, name := range engines {
-		if strings.HasPrefix(name, containerNamePrefix) || slices.Contains(additionalNames, name) {
+		if strings.HasPrefix(name, client.EngineInstancePrefix) || slices.Contains(additionalNames, name) {
 			filteredEngines = append(filteredEngines, name)
 		}
 	}
 	return filteredEngines, nil
-}
-
-func resolveImageID(imageRef string) (string, error) {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return "", fmt.Errorf("parsing image reference: %w", err)
-	}
-	if digest, ok := ref.(name.Digest); ok {
-		// We already have the digest as part of the image ref
-		_, id, ok := strings.Cut(digest.DigestStr(), "sha256:")
-		if !ok {
-			return "", fmt.Errorf("invalid image reference %q", imageRef)
-		}
-		return id[:hashLen], nil
-	}
-	if tag, ok := ref.(name.Tag); ok {
-		// Otherwise, fallback to the image tag
-		return tag.TagStr(), nil
-	}
-
-	// default to latest
-	return "latest", nil
 }
