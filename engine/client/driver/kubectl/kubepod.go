@@ -61,7 +61,7 @@ func kubePodAvailable(ctx context.Context, u *url.URL) error {
 func checkAccess(ctx context.Context, kctx, namespace string, needs ...access) error {
 	scope := describeScope(kctx, namespace)
 	for _, need := range needs {
-		args := append(kubectlScope(kctx, namespace), "--request-timeout=10s", "auth", "can-i", need.verb, need.resource)
+		args := append(kubectlScope(kctx, namespace), "auth", "can-i", need.verb, need.resource)
 		cmd := exec.CommandContext(ctx, "kubectl", args...)
 		// `auth can-i` exits non-zero both for "no" and for failing to ask, so
 		// the answer on stdout is what tells them apart.
