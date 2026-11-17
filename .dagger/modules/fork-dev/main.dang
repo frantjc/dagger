@@ -1,0 +1,165 @@
+pub description = "Publish a patched Dagger CLI to a GitHub release on a fork"
+
+# The platforms to build the CLI for, as upstream releases do.
+let platforms: [String!]! = [
+  # "darwin/amd64",
+  # "darwin/arm64",
+  "linux/amd64",
+  # "linux/arm64",
+  # "linux/arm/v7",
+  # "windows/amd64",
+  # "windows/arm64",
+]
+
+"""
+Builds the Dagger CLI from the workspace, meant to be an upstream release tag
+with patches on top, and publishes it to a GitHub release on a fork. Only the
+CLI is patched: it uses the upstream release's engine image.
+"""
+type ForkDev {
+  let ws: Workspace!
+
+  new(ws: Workspace!) {
+    self.ws = ws
+    self
+  }
+
+  """
+  The upstream release that the source is based on, from
+  internal/version/VERSION, e.g. v1.0.0-beta.27.
+  """
+  pub version: String! {
+    "v" + ws.file("internal/version/VERSION").contents.trimSpace.trimPrefix("v")
+  }
+
+  """
+  The fork to publish to, as OWNER/REPO, read from the URL of the given git
+  remote in the workspace's .git/config.
+  """
+  pub forkRepository(remote: String! = "fork"): String! {
+    let url = {
+      container
+        .from("alpine/git:v2.54.1")
+        .withFile("/config", ws.file(".git/config"))
+        .withExec(["git", "config", "--file", "/config", "--get", "remote." + remote + ".url"])
+        .stdout
+        .trimSpace
+    } rescue {
+      e: Error => raise "cannot find the URL of git remote " + remote + " in .git/config; pass --repository=OWNER/REPO: " + e.message
+    }
+
+    # https://github.com/OWNER/REPO(.git), ssh://git@github.com/OWNER/REPO.git
+    # or git@github.com:OWNER/REPO.git
+    let path = url.trimSuffix("/").trimSuffix(".git")
+    if (path.contains("://")) {
+      path = path.split("://", limit: 2)[1] ?? ""
+      path = path.split("/", limit: 2)[1] ?? ""
+    } else {
+      path = path.split(":", limit: 2)[1] ?? ""
+    }
+    let parts = path.split("/")
+    if (parts.length != 2 or parts[0] == "" or parts[1] == "") {
+      raise "cannot tell OWNER/REPO from the URL of git remote " + remote + ": " + url
+    }
+    path
+  }
+
+  """
+  The Dagger CLI binary for a platform. Its default engine is the upstream
+  release's, not one tagged with the patched commit, which does not exist.
+  """
+  pub binary(platform: Platform! = "linux/amd64"): File! {
+    cliDev(ws: ws, version: version).binary(platform: platform)
+  }
+
+  """
+  The release archives, named like upstream's for tag, and checksums.txt.
+  """
+  pub dist(
+    """
+    The release tag the archives are named after.
+    """
+    tag: String!,
+  ): Directory! {
+    let archiver = container
+      .from("alpine:3.22.1")
+      .withExec(["apk", "add", "--no-cache", "tar", "zip"])
+      .withFile("/input/LICENSE", ws.file("LICENSE"), permissions: 420)
+      .withExec(["mkdir", "-p", "/out"])
+
+    let archives = platforms.map { platform =>
+      let id = platform.replace("/v7", "v7").replace("/", "_")
+      let windows = platform.hasPrefix("windows/")
+      let bin = if (windows) "dagger.exe" else "dagger"
+      let name = "dagger_" + tag + "_" + id + (if (windows) ".zip" else ".tar.gz")
+      let staged = archiver
+        .withFile("/input/" + bin, binary(platform: platform :: Platform!), permissions: 493)
+        .withWorkdir("/input")
+      let packed = if (windows) {
+        staged.withExec(["zip", "-X", "-q", "/out/" + name, "LICENSE", bin])
+      } else {
+        staged.withExec(["tar", "--sort=name", "--mtime=UTC 1970-01-01", "--owner=0", "--group=0", "--numeric-owner", "-czf", "/out/" + name, "LICENSE", bin])
+      }
+      packed.file("/out/" + name)
+    }
+
+    let files = directory.withFiles(".", archives)
+    let checksums = archiver
+      .withDirectory("/dist", files)
+      .withWorkdir("/dist")
+      .withExec(["sh", "-c", "sha256sum $(ls | sort) > /out/checksums.txt"])
+      .file("/out/checksums.txt")
+
+    files.withFile("checksums.txt", checksums)
+  }
+
+  """
+  Publishes the CLI built from HEAD to a prerelease on the fork, which must
+  already have HEAD pushed. Rerunning it with the same tag replaces the
+  release's assets. Returns the release's archives.
+  """
+  pub publishCli(
+    """
+    Token allowed to create releases on the fork.
+    """
+    githubToken: Secret!,
+    """
+    The fork, as OWNER/REPO. Defaults to the one the remote points at.
+    """
+    repository: String,
+    """
+    The git remote to read the fork from when repository is not set.
+    """
+    remote: String! = "fork",
+    """
+    The release tag. Defaults to the upstream version suffixed with the short
+    HEAD commit, e.g. v1.0.0-beta.27-g1a2b3c4.
+    """
+    tag: String,
+  ): Directory! {
+    let clean = { ws.git.uncommitted.isEmpty } rescue { e: Error => false }
+    if (!clean) {
+      raise "the workspace has uncommitted changes; commit and push them to the fork first"
+    }
+
+    let commit = ws.git.head.commit
+    let upstream = version
+    let releaseTag = tag ?? upstream + "-g" + commit.truncate(7)
+    let repo = repository ?? forkRepository(remote: remote)
+    let files = dist(tag: releaseTag)
+
+    gh(token: githubToken, repo: repo)
+      .release
+      .create(
+        tag: releaseTag,
+        title: releaseTag,
+        files: files.entries.map { name => files.file(name) },
+        preRelease: true,
+        target: commit,
+        notes: "Dagger CLI " + upstream + " with patches, built from " + commit + ".\n\nIt uses the upstream engine image `registry.dagger.io/engine:" + upstream + "`.",
+        updateExisting: true,
+      )
+
+    files
+  }
+}
