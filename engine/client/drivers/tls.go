@@ -17,6 +17,19 @@ const (
 	TLSDialTimeout = 10 * time.Second
 )
 
+// tlsAvailable validates the URL and reads any certificate files that it
+// names, so that a bad host or bad certificate paths fail before anything is
+// dialed.
+func tlsAvailable(_ context.Context, u *url.URL) error {
+	if u.Hostname() == "" {
+		return fmt.Errorf("tls engine address must be tls://HOST[:PORT], got %q", u.Redacted())
+	}
+	if _, err := buildTLSConfig(u); err != nil {
+		return fmt.Errorf("failed to build TLS config: %w", err)
+	}
+	return nil
+}
+
 func connhTLS(u *url.URL) (*connhelper.ConnectionHelper, error) {
 	host := u.Hostname()
 	port := u.Port()
