@@ -539,7 +539,7 @@ func (c *Client) startEngine(ctx context.Context, params Params) (rerr error) {
 	var cloudToken string
 	if v, ok := os.LookupEnv(drivers.EnvDaggerCloudToken); ok {
 		cloudToken = v
-	} else if _, ok := os.LookupEnv(envDaggerCloudCachetoken); ok {
+	} else if v, ok := os.LookupEnv(envDaggerCloudCachetoken); ok {
 		cloudToken = v
 	}
 

@@ -51,6 +51,16 @@ func TestKubePodAvailable(t *testing.T) {
 		require.NoError(t, kubePodAvailable(t.Context(), parse(t, "kube-pod://engine?namespace=dagger")))
 	})
 
+	t.Run("kubeconfig is passed to kubectl", func(t *testing.T) {
+		argsLog := fakeKubectl(t, []string{"create pods/exec"}, false)
+		require.NoError(t, kubePodAvailable(t.Context(), parse(t, "kube-pod://engine?kubeconfig=/tmp/other.yaml")))
+
+		args, err := os.ReadFile(argsLog)
+		require.NoError(t, err)
+		require.Contains(t, string(args), "--kubeconfig=/tmp/other.yaml auth can-i")
+		require.Contains(t, string(args), "--kubeconfig=/tmp/other.yaml get pod engine")
+	})
+
 	t.Run("pod missing", func(t *testing.T) {
 		fakeKubectl(t, []string{"create pods/exec"}, false)
 		require.ErrorContains(t, kubePodAvailable(t.Context(), parse(t, "kube-pod://missing")), `pod "missing" is not usable`)

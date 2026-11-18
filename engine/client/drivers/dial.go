@@ -19,9 +19,12 @@ func init() {
 	register("tcp", &dialDriver{available: tcpAvailable})
 	register("unix", &dialDriver{available: unixAvailable})
 	register("ssh", &dialDriver{fn: connhSSH.Helper, available: sshAvailable})
-	register("kube-pod", &dialDriver{fn: connhKube.Helper, available: kubePodAvailable})
+	register("kube-pod", kubePodDriver)
 	register("tls", &dialDriver{fn: connhTLS, available: tlsAvailable})
 }
+
+// kubePodDriver connects to an engine in a running pod with `kubectl exec`.
+var kubePodDriver = &dialDriver{fn: connhKube.Helper, available: kubePodAvailable}
 
 // dialDriver uses the buildkit connhelpers to directly connect
 type dialDriver struct {
